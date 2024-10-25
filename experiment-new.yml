@@ -1,0 +1,79 @@
+run_prepare: !GenericPipeline
+  runs:
+    # we can use anchors '&' to reuse the stage later
+    - !BasicStage &prepare_stage
+      name: prepare
+      # here we specify input dependencies - files or folders
+      inputs: [ ./src/ ]
+
+      # here are outputs - the ./data folder
+      # note the anchor
+      outputs: &input_data [ ./data/ ]
+
+      # a bash script for the stage - just run src/prepare.py
+      script:
+        - python3 src/prepare.py
+        - echo
+run_prepare_train: !GenericPipeline
+  runs:
+    # We use an anchor to reuse the 'prepare' stage
+    - *prepare_stage
+
+    # Add a second stage to the pipeline and set an anchor
+    - !BasicStage &train_stage
+      name: train
+
+      # We can use params attribute of the stage to add any needed parameters
+      # They can be used in computable expressions
+      # See below how to do it
+      params:
+        num_iters: 10
+
+      # Here we use another anchor to add data dependency on the previous stage
+      inputs: *input_data
+      outputs: &model_data [ ./models/default/model.pickle ]
+      
+      script:
+        # We use a computable expression to get num_iters parameter 
+        # This works similar to BASH variables, but uses python
+        # Environment variables are available using dollar sign $ without braces
+        # I.e. $PATH instead of ${PATH}
+        - python3 src/train.py --n ${self.params.num_iters}
+        - echo Current PATH= $PATH
+        - echo
+run_predict: !GenericPipeline
+  runs:
+
+    # We reuse past stages
+    - *prepare_stage
+    - *train_stage
+
+    # And add a new stage
+    - !BasicStage
+      name: predict
+  
+      # note the use of an anchor
+      inputs: *model_data
+      outputs: [ ./results/ ]
+
+      # We can add more environment variables 
+      # They will be available to the script at 'prepare time'
+      # path() is an MLDev function to compose a full path from 
+      # a relative path or link
+      env:
+        MLDEV_MODEL_PATH: "${path(self.inputs[0])}"
+      script:
+        # Variables can be set in the 
+        # MLDev own config in .mldev/config.yaml in section environ
+        # For example, PYTHON_INTERPRETER
+        - $PYTHON_INTERPRETER src/predict.py
+
+        # Here are two examples
+        # (1) In the first line we read path from the environment at run-time
+        # (2) In the second line we read the value using 
+        # a computable expression at prepare-stage pass
+        # We avoid escaping semicolon by using a multiline block
+        - |
+          echo From the environment: $MLDEV_MODEL_PATH
+          echo From the stage params: ${self.env.MLDEV_MODEL_PATH}
+          echo
