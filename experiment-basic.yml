@@ -1,0 +1,116 @@
+
+# Шаг 1.
+# Сначала напишем простой Hello World
+#
+
+hello_world: !GenericPipeline
+  # Пайплайн задает последовательность шагов
+  runs:
+    - !BasicStage
+      # каждый шаг - это этап (stage),
+      # который берет и сохраняет данные на диске
+      name: hello_world
+      script:
+        # скрипт указывает команды для bash
+        - echo Hello World!
+        - >
+          echo "Time is $(date)"
+
+# Для запуска набираем
+# mldev run -f experiment-basic.yml hello_world
+
+
+# Шаг 2.
+# Теперь подключим имеющийся код
+#
+
+run_prepare: !GenericPipeline
+  runs:
+    # можно использовать якоря (anchors),
+    # чтобы потом сослаться на элемент - prepare_stage
+    - !BasicStage &prepare_stage
+      name: prepare
+      # здесь указываем входные и выходные данные (файлы и папки)
+      inputs: [ ./src/ ]
+
+      # здесь мы объявляем выходные данные
+      # и задаем для них якорь - input_data
+      outputs: &input_data [ ./data/ ]
+      script:
+        - python3 src/prepare.py
+        - echo
+
+# Для запуска набираем
+# mldev run -f experiment-basic.yml run_prepare
+#
+# Если нужно повторно перезапустить, несмотря на наличие прошлого результата
+# Указываем --force-run
+# mldev run -f experiment-basic.yml --force-run run_prepare
+
+
+# Шаг 3.
+# Теперь соберем простой пайплайн из двух этапов
+#
+
+run_prepare_train: !GenericPipeline
+  runs:
+    # Не нужно повторять уже написанное ранее
+    # Ссылаемся по якорю prepare_stage
+    - *prepare_stage
+    - !BasicStage &train_stage
+      name: train
+
+      # В params можно добавить какие угодно параметры
+      # Их можно будет использовать в вычисляемых выражениях
+      # См. ниже
+      params:
+        num_iters: 10
+
+      # Получаем на вход ранее определенные пути к данным
+      inputs: *input_data
+      outputs: &model_data [ ./models/default/model.pickle ]
+      script:
+
+        # Используем выражение для получения параметра num_iters
+        # Похоже на переменные в bash, только на python
+        # Соответственно, переменные bash использовать можно без скобок
+        # То есть $PATH вместо ${PATH}
+        - python3 src/train.py --n ${self.params.num_iters}
+        - echo Текущие пути PATH= $PATH
+        - echo
+
+
+# Шаг 4.
+# Теперь соберем сложный пример
+#
+
+run_predict: !GenericPipeline
+  runs:
+
+    # Используем ранее определенные этапы
+    - *prepare_stage
+    - *train_stage
+
+    # Теперь получим предсказания модели
+    - !BasicStage
+      name: predict
+      inputs: *model_data
+      outputs: [ ./results/ ]
+
+      # Можно указать свои переменные окружения
+      # Все из env будет передано в script
+      env:
+        MLDEV_MODEL_PATH: "${path(self.inputs[0])}"
+      script:
+        # Некоторые переменные могут быть определены
+        # В конфиге .mldev/config.yaml в environ
+        # Например, PYTHON_INTERPRETER
+        - $PYTHON_INTERPRETER src/predict.py
+
+        # Первый раз читаем из переменных окружения во время исполнения
+        # Второй раз из параметров этапа до исполнения скрипта
+        # Двоеточие лучше экранировать или записывать в multiline строке
+        - |
+          echo Из переменных среды: $MLDEV_MODEL_PATH
+          echo Из параметров этапа: ${self.env.MLDEV_MODEL_PATH}
+          echo

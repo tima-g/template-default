@@ -1,0 +1,13 @@
+# reconsider use of config file in distribution
+# should be placed in user or project dir
+logger:
+  level: "INFO"
+
+extras:
+  base: mldev.experiment_objects
+
+environ:
+  PYTHON_INTERPRETER: python3
+  EXPERIMENT_FILE: "./experiment.yml"
+  ASK_MISSING: 0
+
